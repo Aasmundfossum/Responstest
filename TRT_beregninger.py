@@ -37,8 +37,9 @@ class TRT_beregning:
             self.plot5()
             self.tilfort_effekt()
             self.plot6()
-            self.lagre_som_png()
-            self.lag_rapport()
+            if self.lag_rapport_knapp == True:
+                self.lagre_som_png()
+                self.lag_rapport()
 
     def streamlit_input(self):
         # Viser alle input-felt i streamlit
@@ -122,80 +123,83 @@ class TRT_beregning:
         self.df = funk_les_datafil(self.datafil)
 
     def finn_denne_test(self):
-        # Gjør datoer om til datetime-format;
-        def custom_to_datetime(timestamp):
-            try:
-                return pd.to_datetime(timestamp, format="%Y-%m-%d %H:%M:%S.%f")
-            except ValueError:
-                return pd.to_datetime(timestamp, format="%Y-%m-%d %H:%M:%S")
+        #@st.cache_data
+        def funk_finn_denne_test():
+            # Gjør datoer om til datetime-format;
+            def custom_to_datetime(timestamp):
+                try:
+                    return pd.to_datetime(timestamp, format="%Y-%m-%d %H:%M:%S.%f")
+                except ValueError:
+                    return pd.to_datetime(timestamp, format="%Y-%m-%d %H:%M:%S")
 
-        self.df['tidspunkt'] = self.df['tidspunkt'].apply(custom_to_datetime)
+            self.df['tidspunkt'] = self.df['tidspunkt'].apply(custom_to_datetime)
 
-        st_starttid = datetime.time(0, 0, 0)
-        st_sluttid = datetime.time(23, 59, 59)
+            st_starttid = datetime.time(0, 0, 0)
+            st_sluttid = datetime.time(23, 59, 59)
 
-        startdato = datetime.datetime.combine(self.st_startdato,st_starttid)
-        sluttdato = datetime.datetime.combine(self.st_sluttdato,st_sluttid)
+            startdato = datetime.datetime.combine(self.st_startdato,st_starttid)
+            sluttdato = datetime.datetime.combine(self.st_sluttdato,st_sluttid)
 
-        # Henter ut rader for kun de aktuelle datoer:
-        denne_test = self.df.loc[(self.df['tidspunkt'] >= startdato) & (self.df['tidspunkt'] <= sluttdato)]
-        denne_test = denne_test.reset_index(drop=True)
+            # Henter ut rader for kun de aktuelle datoer:
+            denne_test = self.df.loc[(self.df['tidspunkt'] >= startdato) & (self.df['tidspunkt'] <= sluttdato)]
+            denne_test = denne_test.reset_index(drop=True)
 
-        # Henter ut rader kun for de aktuelle tidspunkter basert på hvor "Pump enabeled"-kolonnen slår inn:
-        for i in range(0,len(denne_test)):
-            if denne_test['avpaa'].iloc[i] != 0:
-                startrad = int(i)
-                break
-        denne_test = denne_test.iloc[startrad:]
-        denne_test = denne_test.reset_index(drop=True)
+            # Henter ut rader kun for de aktuelle tidspunkter basert på hvor "Pump enabeled"-kolonnen slår inn:
+            for i in range(0,len(denne_test)):
+                if denne_test['avpaa'].iloc[i] != 0:
+                    startrad = int(i)
+                    break
+            denne_test = denne_test.iloc[startrad:]
+            denne_test = denne_test.reset_index(drop=True)
 
-        # Regner ut gjennomsnittstemperaturen til kollektorvæsken, og legger dette som en egen kolonne:
-        snittemp = pd.DataFrame((denne_test['temp_fra_bronn']+denne_test['temp_til_bronn'])/2)
-        denne_test.insert(4,"snittemp",snittemp,True)
-
-        self.denne_test = denne_test
+            # Regner ut gjennomsnittstemperaturen til kollektorvæsken, og legger dette som en egen kolonne:
+            snittemp = pd.DataFrame((denne_test['temp_fra_bronn']+denne_test['temp_til_bronn'])/2)
+            denne_test.insert(4,"snittemp",snittemp,True)
+            
+            return denne_test
+        self.denne_test = funk_finn_denne_test()
 
     def del_test(self):
+        #@st.cache_data
+        def funk_del_test():
+            # Deler inn i før og etter at varmen er slått på, basert på der det dukker opp to like klokkeslett:
+            for i in range(0,len(self.denne_test)):
+                if self.denne_test.iloc[i,0] == self.denne_test.iloc[i-1,0]:
+                    deleindeks = int(i)
+                    break
 
-        # Deler inn i før og etter at varmen er slått på, basert på der det dukker opp to like klokkeslett:
-        for i in range(0,len(self.denne_test)):
-            if self.denne_test.iloc[i,0] == self.denne_test.iloc[i-1,0]:
-                deleindeks = int(i)
-                break
+            test_del1 = self.denne_test.iloc[0:deleindeks,:]
+            test_del2 = self.denne_test.iloc[deleindeks:,:]
 
-        test_del1 = self.denne_test.iloc[0:deleindeks,:]
-        test_del2 = self.denne_test.iloc[deleindeks:,:]
+            test_del1 = test_del1.reset_index(drop=True)                # Resetter radnummer til Dataframes
+            test_del2 = test_del2.reset_index(drop=True)
 
-        test_del1 = test_del1.reset_index(drop=True)                # Resetter radnummer til Dataframes
-        test_del2 = test_del2.reset_index(drop=True)
+            # Lager kolonne som viser antall sekunder siden testen startet
+            startindeks = 0            #Raden hvor testen faktisk starter
+            antall_sek = pd.DataFrame({'sek_siden_start' : [0]*len(test_del2)})
+            for i in range(0,len(test_del2)):
+                antall_sek.iloc[i] = (test_del2['tidspunkt'].iloc[i]-test_del2['tidspunkt'].iloc[startindeks]).total_seconds()
 
-        # Lager kolonne som viser antall sekunder siden testen startet
-        startindeks = 0            #Raden hvor testen faktisk starter
-        antall_sek = pd.DataFrame({'sek_siden_start' : [0]*len(test_del2)})
-        for i in range(0,len(test_del2)):
-            antall_sek.iloc[i] = (test_del2['tidspunkt'].iloc[i]-test_del2['tidspunkt'].iloc[startindeks]).total_seconds()
+            test_del2.insert(1,"sek_siden_start",antall_sek,True)                  # Setter inn antall_sek som kolonne (indeks 1) i test_del2-dataframen
+            test_del2['sek_siden_start'] = test_del2['sek_siden_start'].astype(float)
 
-        test_del2.insert(1,"sek_siden_start",antall_sek,True)                  # Setter inn antall_sek som kolonne (indeks 1) i test_del2-dataframen
-        test_del2['sek_siden_start'] = test_del2['sek_siden_start'].astype(float)
+            # Definerer ln(t)
+            ln_t = pd.DataFrame({'ln_t' : [0]*len(test_del2)})
+            for i in range(0,len(test_del2)):
+                ln_t.iloc[i] = np.log(test_del2['sek_siden_start'].iloc[i])
+            
+            test_del2.insert(2,"ln_t",ln_t,True)
+            test_del2['ln_t'] = test_del2['ln_t'].astype(float)
 
-        # Definerer ln(t)
-        ln_t = pd.DataFrame({'ln_t' : [0]*len(test_del2)})
-        for i in range(0,len(test_del2)):
-            ln_t.iloc[i] = np.log(test_del2['sek_siden_start'].iloc[i])
-        
-        test_del2.insert(2,"ln_t",ln_t,True)
-        test_del2['ln_t'] = test_del2['ln_t'].astype(float)
+            # Henter ut den delen av test_del2 som foregår etter 5 og 20 timer:
+            etter5timer = test_del2.iloc[600:,:]                  #Antar her at det er et 30 sek mellom hvert målepunkt
+            etter5timer = etter5timer.reset_index(drop=True)
+            etter20timer = test_del2.iloc[2400:,:]                  #Antar her at det er et 30 sek mellom hvert målepunkt
+            etter20timer = etter20timer.reset_index(drop=True)
+    
+            return test_del1, test_del2, etter5timer, etter20timer
 
-        # Henter ut den delen av test_del2 som foregår etter 5 og 20 timer:
-        etter5timer = test_del2.iloc[600:,:]                  #Antar her at det er et 30 sek mellom hvert målepunkt
-        etter5timer = etter5timer.reset_index(drop=True)
-        etter20timer = test_del2.iloc[2400:,:]                  #Antar her at det er et 30 sek mellom hvert målepunkt
-        etter20timer = etter20timer.reset_index(drop=True)
-
-        self.test_del1 = test_del1
-        self.test_del2 = test_del2
-        self.etter5timer = etter5timer
-        self.etter20timer = etter20timer
+        [self.test_del1, self.test_del2, self.etter5timer, self.etter20timer] = funk_del_test()
 
     def linear_tiln(self):
         # Lineær tilnærming av gjennomsnittstemperaturen etter 20 timer:
@@ -241,7 +245,7 @@ class TRT_beregning:
     def plot2(self):
         st.markdown("---")
         #self.ledn_evne_slider = st.slider('Varmeledningsevne som kurven konvergerer mot', 0.1, float(10), self.stabil_ledn_evne, step=0.01)
-        self.ledn_evne_slider = st.number_input('Varmeledningsevne som kurven konvergerer mot. Velg verdien som passer best til plottet under.', 0.1, float(10), self.stabil_ledn_evne, step=0.01)
+        self.ledn_evne_slider = st.number_input('Varmeledningsevne som kurven konvergerer mot. Velg verdien som passer best til plottet under.', 0.5*self.stabil_ledn_evne, 1.5*self.stabil_ledn_evne, self.stabil_ledn_evne, step=0.01)
         stabil_ledn_evne_tilplot = pd.DataFrame({'Value' : [self.ledn_evne_slider]*len(self.test_del2)})
         til_plot2 = pd.DataFrame({"Tider" : self.test_del2['sek_siden_start'].iloc[self.indeks5timer:]/3600, "Effektiv ledningsevne" : self.ledn_evne[0].iloc[self.indeks5timer:], 'Stabilisert ledningsevne' : stabil_ledn_evne_tilplot['Value']})
         fig2 = px.line(til_plot2, x='Tider', y=['Effektiv ledningsevne','Stabilisert ledningsevne'], title='Utvikling av effektiv varmeledningsevne', color_discrete_sequence=['#367A2F', '#FFC358'])
@@ -266,15 +270,15 @@ class TRT_beregning:
         motstand_gjett = np.mean(motstand_gjett_vektor[3:])
 
         st.markdown("---")
-        self.motstand = st.number_input('Varmemotstand (mK/W). Velg den verdien som gir best samsvar med kurven under.', float(0), float(1), motstand_gjett, step=0.001)
+        self.motstand = st.number_input('Varmemotstand (mK/W). Velg den verdien som gir best samsvar med kurven under.', 0.5*motstand_gjett, 1.5*motstand_gjett, motstand_gjett, step=0.001)
 
         teori_temp = self.uforst_temp_verdi+I1*np.array(self.test_del2['ln_t'])+I1*(np.log((4*diff)/(((self.diam/1000)/2)**2))-0.5772)+(self.mid_effekt/self.dybde)*motstand_gjett
         self.teori_temp = pd.DataFrame(teori_temp)
 
     def plot3(self):
-        motstand_str = str(round(self.motstand,3))
-        snittemp_tilplot = pd.DataFrame({"Tider" : self.test_del2['sek_siden_start']/3600, "Gj.snittstemp. kollektorvæske" : self.test_del2['snittemp'], "Typekurve R = "+motstand_str+" mK/W" : self.teori_temp[0]})
-        fig3 = px.line(snittemp_tilplot, x='Tider', y=["Gj.snittstemp. kollektorvæske","Typekurve R = "+motstand_str+" mK/W"], title='Faktisk temp.forløp og typekurve for termisk motstand R = '+motstand_str+' mK/W', color_discrete_sequence=['#367A2F', '#FFC358'])
+        self.motstand_str = str(round(self.motstand,3))
+        snittemp_tilplot = pd.DataFrame({"Tider" : self.test_del2['sek_siden_start']/3600, "Gj.snittstemp. kollektorvæske" : self.test_del2['snittemp'], "Typekurve R = "+self.motstand_str+" mK/W" : self.teori_temp[0]})
+        fig3 = px.line(snittemp_tilplot, x='Tider', y=["Gj.snittstemp. kollektorvæske","Typekurve R = "+self.motstand_str+" mK/W"], title='Faktisk temp.forløp og typekurve for termisk motstand R = '+self.motstand_str+' mK/W', color_discrete_sequence=['#367A2F', '#FFC358'])
         fig3.update_layout(xaxis_title='Tid siden teststart (timer)', yaxis_title='Temperatur (\u2103)',legend_title=None)
         st.plotly_chart(fig3)
         self.fig3 = fig3
@@ -311,6 +315,9 @@ class TRT_beregning:
         st.plotly_chart(fig6)
         self.fig6 = fig6
 
+        st.markdown("---")
+        self.lag_rapport_knapp = st.checkbox('Generer rapport')
+
     def lagre_som_png(self):
         fig_bredde = 800
         fig_hoyde = 450
@@ -322,18 +329,51 @@ class TRT_beregning:
         self.fig6.write_image("TRT-figurer/fig6.png",width=fig_bredde, height=fig_hoyde)
 
     def lag_rapport(self):
-        sted = "Hos meg"
-        oppdragsgiver = "Askeladden"
+        c1, c2 = st.columns(2)
+        with c1:
+            sted = st.text_input('Sted hvor responstesten er gjennomført', "Hos meg")
+        with c2:
+            oppdragsgiver = st.text_input('Oppdragsgiver', 'Brønnborer')
+        
         document = Document("Mal Rapport TRT - .docx")
         styles = document.styles
         style = styles.add_style('Citation', WD_STYLE_TYPE.PARAGRAPH)
-        #document.paragraphs[1].text = f"Oppdragsgiver - {oppdragsgiver}"
-        #document.paragraphs[2].text = f"Tittel på rapport: Termisk responstest - {sted}"
-        #document.paragraphs[3].text = f"Oppdragsnavn: Geoteknisk rapport - {sted}"
+        #document.paragraphs[1].text = f"Oppdragsgiver: \t {oppdragsgiver}"
+        #innhold_p1 = document.paragraphs[1].text
+        #document.paragraphs[1].text = innhold_p1.replace('[python_bronnborer]',oppdragsgiver)
+
+        #document.paragraphs[2].text = f"Tittel på rapport: \t Termisk responstest - {sted}"
+        #document.paragraphs[3].text = f"Oppdragsnavn: \t Termisk responstest - {sted}"
         #document.paragraphs[4].text = f"Oppdragsnummer: - 123456789""
         #document.add_heading("Innledning", 1)
         #document.add_paragraph(report_text_1)
         
+
+        def sett_inn_i_rapport(eks_str,ny_str):
+            for paragraph_index, paragraph in enumerate(document.paragraphs):
+                if eks_str in paragraph.text:
+                    linje_til_motstand = paragraph_index
+                    innhold = document.paragraphs[linje_til_motstand].text
+                    document.paragraphs[linje_til_motstand].clear()
+                    document.paragraphs[linje_til_motstand].text = innhold.replace(eks_str,ny_str)
+                    
+        sett_inn_i_rapport("[python_sted]", sted)
+        sett_inn_i_rapport("[python_bronnborer]",oppdragsgiver)
+        sett_inn_i_rapport("[python_dybde]",str(self.dybde))
+        sett_inn_i_rapport("[python_ledn_evne]",str(round(self.ledn_evne_slider,2)))
+        sett_inn_i_rapport("[python_motstand]",self.motstand_str)
+        sett_inn_i_rapport("[python_uforst_temp]",str(round(self.uforst_temp_verdi, 2)))
+        sett_inn_i_rapport("[python_0_02_pluss_motstand]",str(round(self.motstand+0.02, 2)))
+
+        for section in document.sections:
+            footer = section.footer
+            for paragraph in footer.paragraphs:
+                if '[python_sted]' in paragraph.text:
+                    content = paragraph.text
+                    paragraph.clear()
+                    paragraph.add_run(content.replace('[python_sted]', sted))
+
+
         for paragraph_index, paragraph in enumerate(document.paragraphs):
             if "[python_fig2]" in paragraph.text:
                 linje_til_fig2 = paragraph_index
