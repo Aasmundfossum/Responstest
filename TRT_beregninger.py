@@ -80,6 +80,8 @@ class TRT_beregning:
             #self.knapp = st.button('Kjør :steam_locomotive:',use_container_width=True)
             self.knapp = st.checkbox('Kjør :steam_locomotive:')
 
+        st.spinner(text="In progress...")
+
     def varmeegenskaper(self):
         if self.kollvaeske == 'HXi24':
             self.tetthet = 970.5
@@ -123,25 +125,27 @@ class TRT_beregning:
         self.df = funk_les_datafil(self.datafil)
 
     def finn_denne_test(self):
-        #@st.cache_data
-        def funk_finn_denne_test():
-            # Gjør datoer om til datetime-format;
-            def custom_to_datetime(timestamp):
-                try:
-                    return pd.to_datetime(timestamp, format="%Y-%m-%d %H:%M:%S.%f")
-                except ValueError:
-                    return pd.to_datetime(timestamp, format="%Y-%m-%d %H:%M:%S")
 
-            self.df['tidspunkt'] = self.df['tidspunkt'].apply(custom_to_datetime)
+        def custom_to_datetime(timestamp):
+            try:
+                return pd.to_datetime(timestamp, format="%Y-%m-%d %H:%M:%S.%f")
+            except ValueError:
+                return pd.to_datetime(timestamp, format="%Y-%m-%d %H:%M:%S")
+        
+        @st.cache_data
+        def funk_finn_denne_test(startdato_tilfunk,sluttdato_tilfunk,df_tilfunk):
+            # Gjør datoer om til datetime-format;
+
+            df_tilfunk['tidspunkt'] = df_tilfunk['tidspunkt'].apply(custom_to_datetime)
 
             st_starttid = datetime.time(0, 0, 0)
             st_sluttid = datetime.time(23, 59, 59)
 
-            startdato = datetime.datetime.combine(self.st_startdato,st_starttid)
-            sluttdato = datetime.datetime.combine(self.st_sluttdato,st_sluttid)
+            startdato = datetime.datetime.combine(startdato_tilfunk,st_starttid)
+            sluttdato = datetime.datetime.combine(sluttdato_tilfunk,st_sluttid)
 
             # Henter ut rader for kun de aktuelle datoer:
-            denne_test = self.df.loc[(self.df['tidspunkt'] >= startdato) & (self.df['tidspunkt'] <= sluttdato)]
+            denne_test = df_tilfunk.loc[(self.df['tidspunkt'] >= startdato) & (df_tilfunk['tidspunkt'] <= sluttdato)]
             denne_test = denne_test.reset_index(drop=True)
 
             # Henter ut rader kun for de aktuelle tidspunkter basert på hvor "Pump enabeled"-kolonnen slår inn:
@@ -155,21 +159,21 @@ class TRT_beregning:
             # Regner ut gjennomsnittstemperaturen til kollektorvæsken, og legger dette som en egen kolonne:
             snittemp = pd.DataFrame((denne_test['temp_fra_bronn']+denne_test['temp_til_bronn'])/2)
             denne_test.insert(4,"snittemp",snittemp,True)
-            
             return denne_test
-        self.denne_test = funk_finn_denne_test()
+        
+        self.denne_test = funk_finn_denne_test(self.st_startdato,self.st_sluttdato,self.df)
 
     def del_test(self):
-        #@st.cache_data
-        def funk_del_test():
+        @st.cache_data
+        def funk_del_test(denne_test_tilfunk):
             # Deler inn i før og etter at varmen er slått på, basert på der det dukker opp to like klokkeslett:
-            for i in range(0,len(self.denne_test)):
-                if self.denne_test.iloc[i,0] == self.denne_test.iloc[i-1,0]:
+            for i in range(0,len(denne_test_tilfunk)):
+                if denne_test_tilfunk.iloc[i,0] == denne_test_tilfunk.iloc[i-1,0]:
                     deleindeks = int(i)
                     break
 
-            test_del1 = self.denne_test.iloc[0:deleindeks,:]
-            test_del2 = self.denne_test.iloc[deleindeks:,:]
+            test_del1 = denne_test_tilfunk.iloc[0:deleindeks,:]
+            test_del2 = denne_test_tilfunk.iloc[deleindeks:,:]
 
             test_del1 = test_del1.reset_index(drop=True)                # Resetter radnummer til Dataframes
             test_del2 = test_del2.reset_index(drop=True)
@@ -199,7 +203,7 @@ class TRT_beregning:
     
             return test_del1, test_del2, etter5timer, etter20timer
 
-        [self.test_del1, self.test_del2, self.etter5timer, self.etter20timer] = funk_del_test()
+        [self.test_del1, self.test_del2, self.etter5timer, self.etter20timer] = funk_del_test(self.denne_test)
 
     def linear_tiln(self):
         # Lineær tilnærming av gjennomsnittstemperaturen etter 20 timer:
@@ -316,7 +320,7 @@ class TRT_beregning:
         self.fig6 = fig6
 
         st.markdown("---")
-        self.lag_rapport_knapp = st.checkbox('Generer rapport')
+        self.lag_rapport_knapp = st.checkbox('Generer rapport 📝')
 
     def lagre_som_png(self):
         fig_bredde = 800
@@ -348,7 +352,7 @@ class TRT_beregning:
         #document.add_heading("Innledning", 1)
         #document.add_paragraph(report_text_1)
         
-
+        # Setter inn stedsnavn, tall osv i rapporten ved gitte kode-substrings:
         def sett_inn_i_rapport(eks_str,ny_str):
             for paragraph_index, paragraph in enumerate(document.paragraphs):
                 if eks_str in paragraph.text:
@@ -365,15 +369,7 @@ class TRT_beregning:
         sett_inn_i_rapport("[python_uforst_temp]",str(round(self.uforst_temp_verdi, 2)))
         sett_inn_i_rapport("[python_0_02_pluss_motstand]",str(round(self.motstand+0.02, 2)))
 
-        for section in document.sections:
-            footer = section.footer
-            for paragraph in footer.paragraphs:
-                if '[python_sted]' in paragraph.text:
-                    content = paragraph.text
-                    paragraph.clear()
-                    paragraph.add_run(content.replace('[python_sted]', sted))
-
-
+        # Setter inn figurer på riktig sted i rapporten:
         for paragraph_index, paragraph in enumerate(document.paragraphs):
             if "[python_fig2]" in paragraph.text:
                 linje_til_fig2 = paragraph_index
@@ -414,6 +410,7 @@ class TRT_beregning:
         bilde6.width = Cm(16)
         bilde6.height = Cm(9)
 
+        # Laster ned rapporten vha. download-knapp
         st.markdown("---")
         bio = io.BytesIO()
         document.save(bio)
